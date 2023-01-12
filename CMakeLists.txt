@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD 17)
 # Creates a pico-sdk subdirectory in our project for the libraries
 pico_sdk_init()
 
-add_subdirectory(pico-ssd1306)
+add_subdirectory(pico-ssd1306) # clone https://github.com/Harbys/pico-ssd1306.git
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
@@ -27,7 +27,9 @@ pico_add_extra_outputs(${PROJECT_NAME})
 # Link to pico_stdlib (gpio, time, etc. functions)
 target_link_libraries(${PROJECT_NAME} 
     pico_stdlib
+    pico_multicore
     hardware_i2c
+    hardware_pwm
     pico_ssd1306
 )
 
