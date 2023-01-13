@@ -64,22 +64,18 @@ struct {
     }
 } buttons;
 
-struct Sensor {
-    uint pin;
-    int8_t head;
-    int8_t tail;
+struct RingBuffer {
+    int32_t head;
+    int32_t tail;
     bool full;
     uint64_t measuresNs[16];
     mutex_t mutex;
 
-    Sensor(uint _pin) :
-        pin(_pin),
-        full(false),
+    RingBuffer() :
         head(),
-        tail()
+        tail(),
+        full(false) 
     {
-        gpio_init(pin);
-        gpio_set_dir(pin, GPIO_IN);
         mutex_init(&mutex);
     }
 
@@ -94,11 +90,10 @@ struct Sensor {
     void push(uint64_t measure) {
         mutex_enter_blocking(&mutex);
         measuresNs[tail] = measure;
+        tail = next(tail);
         if (full) { // overwrite
-            tail = next(tail);
             head = tail;
         } else {
-            tail = next(tail);
             full = (tail == head);
         }
         mutex_exit(&mutex);
@@ -119,19 +114,30 @@ struct Sensor {
         return result;
     }
 
-    int8_t size() {
+    int32_t size() {
         if (full) return 16;
         auto diff = tail - head;
         return (tail >= head) ? diff : diff + 16;
     }
 
-    inline int8_t next(int8_t i) {
+    inline int32_t next(int32_t i) {
         return (i + 1) & 0xF;
     }
 };
 
-const uint pinSensorB = 20;
-auto sensorB = Sensor(pinSensorB);
+struct Sensor {
+    uint pin;
+    RingBuffer measures;
+    
+    void init(uint _pin) {
+        pin = _pin;
+        gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL, true);
+    }    
+};
+
+Sensor sensorA;
+Sensor sensorB;
+Sensor sensorC;
 
 struct {
     const uint pinEsc = 3;
@@ -164,13 +170,13 @@ struct {
 } servo;
 
 void measure_spool_up(SSD1306 &lcd) {
-    sensorB.clear();
+    sensorB.measures.clear();
     servo.setMicros(2000);
     auto startNs = time_us_64();
     while (!gpio_get(buttons.throttle)) {
         uint64_t prev;
         uint64_t curr;
-        while (sensorB.pop(prev, curr)) {
+        if (sensorB.measures.pop(prev, curr)) {
             auto time = curr - startNs;
             printf("%i\n", time);
             if (time > 3000000000L) { // sec
@@ -183,14 +189,14 @@ void measure_spool_up(SSD1306 &lcd) {
 }
 
 void handle_interrupt(uint gpio, uint32_t event_mask) {
-    if (gpio == pinSensorB) {
-        sensorB.push(time_us_64());
+    if (gpio == sensorB.pin) {
+        sensorB.measures.push(time_us_64());
     }
 }
 
 void setup_sensor_interrupts() {
-    gpio_set_irq_callback(handle_interrupt);
-    gpio_set_irq_enabled(pinSensorB, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_callback(&handle_interrupt);
+    irq_set_enabled(IO_IRQ_BANK0, true);
 }
 
 int main() {
@@ -210,7 +216,19 @@ int main() {
     
     buttons.init();
     servo.init();
-    multicore_launch_core1(setup_sensor_interrupts);
+
+    //sensorA.init(19);
+    sensorB.init(20);
+    //sensorC.init(21);
+    //multicore_launch_core1(&setup_sensor_interrupts);
+    setup_sensor_interrupts(); // TODO how to move to another processor?
+    
+    //gpio_set_irq_callback(&handle_interrupt);
+    //gpio_set_irq_enabled_with_callback(20, GPIO_IRQ_EDGE_FALL, true, &handle_interrupt);
+    
+    sleep_ms(1000);
+    // TODO test
+    
 
     // ads1115 ADC address 0x48 (72)
 
