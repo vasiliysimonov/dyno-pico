@@ -11,7 +11,7 @@
 const uint led_pin = 25;
 
 void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
-    i2c_init(i2c, 100 * 1000);
+    i2c_init(i2c, 400 * 1000);
     gpio_set_function(sda, GPIO_FUNC_I2C);
     gpio_set_function(scl, GPIO_FUNC_I2C);
     gpio_pull_up(sda);
@@ -173,27 +173,38 @@ uint32_t time_diff(uint32_t t2, uint32_t t1) {
     return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
 }
 
+void display(SSD1306 &lcd, char* line) {
+    lcd.clear();
+    drawText(&lcd, font_8x8, line, 0, 12);        
+    lcd.sendBuffer();
+}
+
 void measure_spool_up(SSD1306 &lcd) {
     sensorB.measures.clear();
     servo.setMicros(2000);
     auto startUs = time_us_32();
+    int32_t maxLength = 0;
+    uint32_t rpm = 0;
+    char line[17];
     while (!gpio_get(buttons.throttle)) {
         uint32_t prev;
         uint32_t curr;
+        maxLength = MAX(sensorB.measures.size(), maxLength);
         while (sensorB.measures.pop(prev, curr)) {
             auto time = time_diff(curr, startUs);
             auto rpm = 60000000 / time_diff(curr, prev);
-            //lcd.clear();
-            char line[17];
+            
             sniprintf(line, 16, "%d", rpm);
-            //drawText(&lcd, font_8x8, line, 0, 12);
-            //lcd.sendBuffer();
             puts(line);
+
             if (time > 3000000L) { // sec
                 printf("final rpm %d\n", rpm);
+                printf("max length %d\n", maxLength);
+                display(lcd, line);
                 return;
             }
         }
+        display(lcd, line);
         sleep_ms(50);
     }
 }
