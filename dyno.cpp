@@ -99,7 +99,7 @@ struct RingBuffer {
         mutex_exit(&mutex);
     }
 
-    bool pop(uint32_t &prev, uint32_t &curr) { 
+    bool pop(uint32_t& prev, uint32_t& curr) { 
         mutex_enter_blocking(&mutex);
         bool result = false;
         if (size() > 1) { // TODO simplify count
@@ -117,7 +117,7 @@ struct RingBuffer {
     int32_t size() {
         if (full) return 16;
         auto diff = tail - head;
-        return (tail >= head) ? diff : diff + 16;
+        return (diff >= 0) ? diff : diff + 16;
     }
 
     inline int32_t next(int32_t i) {
@@ -131,7 +131,7 @@ struct Sensor {
     
     void init(uint _pin) {
         pin = _pin;
-        gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL, true);
+        gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     }    
 };
 
@@ -176,15 +176,21 @@ uint32_t time_diff(uint32_t t2, uint32_t t1) {
 void measure_spool_up(SSD1306 &lcd) {
     sensorB.measures.clear();
     servo.setMicros(2000);
-    auto startNs = time_us_32();
+    auto startUs = time_us_32();
     while (!gpio_get(buttons.throttle)) {
         uint32_t prev;
         uint32_t curr;
-        if (sensorB.measures.pop(prev, curr)) {
-            auto time = time_diff(curr, startNs);
-            printf("%i\n", time);
-            if (time > 3000000000L) { // sec
-                printf("final rpm %i\n", 6000000000L / time_diff(curr, prev));
+        while (sensorB.measures.pop(prev, curr)) {
+            auto time = time_diff(curr, startUs);
+            auto rpm = 60000000 / time_diff(curr, prev);
+            //lcd.clear();
+            char line[17];
+            sniprintf(line, 16, "%d", rpm);
+            //drawText(&lcd, font_8x8, line, 0, 12);
+            //lcd.sendBuffer();
+            puts(line);
+            if (time > 3000000L) { // sec
+                printf("final rpm %d\n", rpm);
                 return;
             }
         }
@@ -192,13 +198,21 @@ void measure_spool_up(SSD1306 &lcd) {
     }
 }
 
+bool lastB = false;
 void handle_interrupt(uint gpio, uint32_t event_mask) {
     if (gpio == sensorB.pin) {
-        sensorB.measures.push(time_us_32());
+        bool b = gpio_get(sensorB.pin);
+        if (b && !lastB) {
+            sensorB.measures.push(time_us_32());
+        }
+        lastB = b;
     }
 }
 
 void setup_sensor_interrupts() {
+    //sensorA.init(19);
+    sensorB.init(20);
+    //sensorC.init(21);
     gpio_set_irq_callback(&handle_interrupt);
     irq_set_enabled(IO_IRQ_BANK0, true);
 }
@@ -221,14 +235,8 @@ int main() {
     buttons.init();
     servo.init();
 
-    //sensorA.init(19);
-    sensorB.init(20);
-    //sensorC.init(21);
-    //multicore_launch_core1(&setup_sensor_interrupts);
-    setup_sensor_interrupts(); // TODO how to move to another processor?
-    
-    //gpio_set_irq_callback(&handle_interrupt);
-    //gpio_set_irq_enabled_with_callback(20, GPIO_IRQ_EDGE_FALL, true, &handle_interrupt);
+    // interrups on second core
+    multicore_launch_core1(&setup_sensor_interrupts);
     
     // ads1115 ADC address 0x48 (72)
 
@@ -248,12 +256,12 @@ int main() {
         }
         lastThrottle = throttle;
 
-        lcd.clear();
+        //lcd.clear();
         char line[17];
-        sniprintf(line, 16, "3sec          %c%c", reverse ? 'B' : '-', throttle ? 'T' : '-');
-        drawText(&lcd, font_8x8, line, 0, 12);
+        //sniprintf(line, 16, "3sec          %c%c", reverse ? 'B' : '-', throttle ? 'T' : '-');
+        //drawText(&lcd, font_8x8, line, 0, 12);
         //drawText(&display.lcd, font_8x8, "8.23V     150.1A", 0, 0);
-        lcd.sendBuffer();
+        //lcd.sendBuffer();
         
         
         //i2c_scan_address();
