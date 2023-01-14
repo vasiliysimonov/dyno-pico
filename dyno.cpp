@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "pico/mutex.h"
@@ -64,11 +65,13 @@ struct {
     }
 } buttons;
 
+#define SIZE 64
+
 struct RingBuffer {
     int32_t head;
     int32_t tail;
     bool full;
-    uint32_t measuresNs[16];
+    uint32_t measuresNs[SIZE];
     mutex_t mutex;
 
     RingBuffer() :
@@ -115,13 +118,14 @@ struct RingBuffer {
     }
 
     int32_t size() {
-        if (full) return 16;
+        if (full) return SIZE;
         auto diff = tail - head;
         return (diff >= 0) ? diff : diff + 16;
     }
 
     inline int32_t next(int32_t i) {
-        return (i + 1) & 0xF;
+        auto next = i + 1;
+        return (next == SIZE) ? 0 : next;
     }
 };
 
@@ -173,15 +177,15 @@ uint32_t time_diff(uint32_t t2, uint32_t t1) {
     return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
 }
 
-void display(SSD1306 &lcd, char* line) {
+void display(SSD1306 &lcd, const char* line) {
     lcd.clear();
-    drawText(&lcd, font_8x8, line, 0, 12);        
+    drawText(&lcd, font_12x16, line, 0, 12);        
     lcd.sendBuffer();
 }
 
 void measure_spool_up(SSD1306 &lcd) {
     sensorB.measures.clear();
-    servo.setMicros(2000);
+    servo.setMicros(1580);
     auto startUs = time_us_32();
     int32_t maxLength = 0;
     uint32_t rpm = 0;
@@ -193,10 +197,8 @@ void measure_spool_up(SSD1306 &lcd) {
         while (sensorB.measures.pop(prev, curr)) {
             auto time = time_diff(curr, startUs);
             auto rpm = 60000000 / time_diff(curr, prev);
-            
-            sniprintf(line, 16, "%d", rpm);
+            itoa(rpm, line, 10);
             puts(line);
-
             if (time > 3000000L) { // sec
                 printf("final rpm %d\n", rpm);
                 printf("max length %d\n", maxLength);
@@ -205,7 +207,7 @@ void measure_spool_up(SSD1306 &lcd) {
             }
         }
         display(lcd, line);
-        sleep_ms(50);
+        //sleep_ms(50);
     }
 }
 
@@ -214,6 +216,8 @@ void handle_interrupt(uint gpio, uint32_t event_mask) {
     if (gpio == sensorB.pin) {
         bool b = gpio_get(sensorB.pin);
         if (b && !lastB) {
+            // TODO measure systick 
+            // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
             sensorB.measures.push(time_us_32());
         }
         lastB = b;
@@ -251,6 +255,7 @@ int main() {
     
     // ads1115 ADC address 0x48 (72)
 
+    display(lcd, "0");
     bool lastThrottle = false;
     for (int i = 0; true; i++) { 
         // process buttons
@@ -266,23 +271,6 @@ int main() {
             servo.setMicros(1500);
         }
         lastThrottle = throttle;
-
-        //lcd.clear();
-        char line[17];
-        //sniprintf(line, 16, "3sec          %c%c", reverse ? 'B' : '-', throttle ? 'T' : '-');
-        //drawText(&lcd, font_8x8, line, 0, 12);
-        //drawText(&display.lcd, font_8x8, "8.23V     150.1A", 0, 0);
-        //lcd.sendBuffer();
-        
-        
-        //i2c_scan_address();
-
-        /*
-        gpio_put(led_pin, true);
-        sleep_ms(500);
-        gpio_put(led_pin, false);
-        sleep_ms(500);
-        */
-       sleep_ms(100);
+        sleep_ms(100);
     }
 }
