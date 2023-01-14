@@ -68,7 +68,7 @@ struct RingBuffer {
     int32_t head;
     int32_t tail;
     bool full;
-    uint64_t measuresNs[16];
+    uint32_t measuresNs[16];
     mutex_t mutex;
 
     RingBuffer() :
@@ -87,7 +87,7 @@ struct RingBuffer {
         mutex_exit(&mutex);
     }
 
-    void push(uint64_t measure) {
+    void push(uint32_t measure) {
         mutex_enter_blocking(&mutex);
         measuresNs[tail] = measure;
         tail = next(tail);
@@ -99,7 +99,7 @@ struct RingBuffer {
         mutex_exit(&mutex);
     }
 
-    bool pop(uint64_t &prev, uint64_t &curr) { 
+    bool pop(uint32_t &prev, uint32_t &curr) { 
         mutex_enter_blocking(&mutex);
         bool result = false;
         if (size() > 1) { // TODO simplify count
@@ -169,18 +169,22 @@ struct {
     }
 } servo;
 
+uint32_t time_diff(uint32_t t2, uint32_t t1) {
+    return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
+}
+
 void measure_spool_up(SSD1306 &lcd) {
     sensorB.measures.clear();
     servo.setMicros(2000);
-    auto startNs = time_us_64();
+    auto startNs = time_us_32();
     while (!gpio_get(buttons.throttle)) {
-        uint64_t prev;
-        uint64_t curr;
+        uint32_t prev;
+        uint32_t curr;
         if (sensorB.measures.pop(prev, curr)) {
-            auto time = curr - startNs;
+            auto time = time_diff(curr, startNs);
             printf("%i\n", time);
             if (time > 3000000000L) { // sec
-                printf("final rpm %i\n", 6000000000L / (curr - prev));
+                printf("final rpm %i\n", 6000000000L / time_diff(curr, prev));
                 return;
             }
         }
@@ -190,7 +194,7 @@ void measure_spool_up(SSD1306 &lcd) {
 
 void handle_interrupt(uint gpio, uint32_t event_mask) {
     if (gpio == sensorB.pin) {
-        sensorB.measures.push(time_us_64());
+        sensorB.measures.push(time_us_32());
     }
 }
 
@@ -226,10 +230,6 @@ int main() {
     //gpio_set_irq_callback(&handle_interrupt);
     //gpio_set_irq_enabled_with_callback(20, GPIO_IRQ_EDGE_FALL, true, &handle_interrupt);
     
-    sleep_ms(1000);
-    // TODO test
-    
-
     // ads1115 ADC address 0x48 (72)
 
     bool lastThrottle = false;
