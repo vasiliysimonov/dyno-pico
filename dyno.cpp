@@ -117,6 +117,13 @@ struct RingBuffer {
         return result;
     }
 
+    uint32_t peek() {
+        mutex_enter_blocking(&mutex);
+        auto res = measuresNs[next(head)];
+        mutex_exit(&mutex);
+        return res;
+    }
+
     int32_t size() {
         if (full) return SIZE;
         auto diff = tail - head;
@@ -132,11 +139,23 @@ struct RingBuffer {
 struct Sensor {
     uint pin;
     RingBuffer measures;
+    bool last;
     
     void init(uint _pin) {
         pin = _pin;
+        last = false;
         gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
-    }    
+    }
+
+    void handle_interrupt(uint32_t time) {
+        bool state = gpio_get(pin);
+        if (state && !last) {
+            // TODO measure systick 
+            // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
+            measures.push(time);
+        }
+        last = state;
+    }
 };
 
 Sensor sensorA;
@@ -183,54 +202,92 @@ void display(SSD1306 &lcd, const char* line) {
     lcd.sendBuffer();
 }
 
+#define SWAP(a, b) { auto t = a; a = b; b = t; }
+
+bool pop3(uint32_t& prev, uint32_t& curr) {
+    uint32_t peeks[] = { sensorA.measures.peek(), sensorB.measures.peek(), sensorC.measures.peek() };
+    RingBuffer* sensors[] = { &sensorA.measures, &sensorB.measures, &sensorC.measures };
+    if (peeks[0] > peeks[2]) {
+        SWAP(peeks[0], peeks[2]);
+        SWAP(sensors[0], sensors[2]);
+    }
+    if (peeks[0] > peeks[1]) {
+        SWAP(peeks[0], peeks[1]);
+        SWAP(sensors[0], sensors[1]);
+    }
+    if (sensors[0]->pop(prev, curr)) return true;
+
+    if (peeks[1] > peeks[2]) {
+        SWAP(peeks[1], peeks[2]);
+        SWAP(sensors[1], sensors[2]);
+    }
+    if (sensors[1]->pop(prev, curr)) return true;
+    if (sensors[2]->pop(prev, curr)) return true;
+    return false;
+}
+
 void measure_spool_up(SSD1306 &lcd) {
+    sensorA.measures.clear();
     sensorB.measures.clear();
-    servo.setMicros(1580);
+    sensorC.measures.clear();
+
+    servo.setMicros(2000);
     auto startUs = time_us_32();
     int32_t maxLength = 0;
     uint32_t rpm = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
+        maxLength = MAX(sensorA.measures.size(), maxLength);
+        maxLength = MAX(sensorB.measures.size(), maxLength);
+        maxLength = MAX(sensorC.measures.size(), maxLength);
+
+        uint32_t diff = 0;
         uint32_t prev;
         uint32_t curr;
-        maxLength = MAX(sensorB.measures.size(), maxLength);
-        while (sensorB.measures.pop(prev, curr)) {
+        while (pop3(prev, curr)) {
             auto time = time_diff(curr, startUs);
-            auto rpm = 60000000 / time_diff(curr, prev);
-            itoa(rpm, line, 10);
-            puts(line);
-            if (time > 3000000L) { // sec
+            diff = time_diff(curr, prev);
+            printf("%d,%d\n", time, diff);
+            if (time > 5000000) { // sec
+                auto rpm = 60000000 / diff;
                 printf("final rpm %d\n", rpm);
                 printf("max length %d\n", maxLength);
+                itoa(rpm, line, 10);
                 display(lcd, line);
                 return;
             }
         }
-        display(lcd, line);
-        //sleep_ms(50);
+        if (diff != 0) {
+            auto rpm = 60000000 / diff;
+            itoa(rpm, line, 10);
+            display(lcd, line);
+        }
     }
 }
 
-bool lastB = false;
 void handle_interrupt(uint gpio, uint32_t event_mask) {
-    if (gpio == sensorB.pin) {
-        bool b = gpio_get(sensorB.pin);
-        if (b && !lastB) {
-            // TODO measure systick 
-            // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
-            sensorB.measures.push(time_us_32());
-        }
-        lastB = b;
+    auto time = time_us_32();
+    if (gpio == sensorA.pin) {
+        sensorA.handle_interrupt(time);
+    } else if (gpio == sensorB.pin) {
+        sensorB.handle_interrupt(time);
+    } else if (gpio == sensorC.pin) {
+        sensorC.handle_interrupt(time);
     }
 }
 
 void setup_sensor_interrupts() {
-    //sensorA.init(19);
+    sensorA.init(19);
     sensorB.init(20);
-    //sensorC.init(21);
+    sensorC.init(21);
     gpio_set_irq_callback(&handle_interrupt);
     irq_set_enabled(IO_IRQ_BANK0, true);
 }
+
+
+// TODO 
+// higher resolution timer
+// separate files for separate classes
 
 int main() {
     stdio_init_all();
