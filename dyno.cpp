@@ -172,8 +172,8 @@ struct {
         gpio_set_function(pinEsc, GPIO_FUNC_PWM);
         slice = pwm_gpio_to_slice_num(pinEsc);
         channel = pwm_gpio_to_channel(pinEsc);
-        // servo cycle is 20000mks or 50Hz 
-        uint32_t freq = 50;
+        // servo cycle is 3000mks or 333Hz 
+        uint32_t freq = 333;
         uint32_t clock = 125000000;
         uint32_t divider16 = clock / (freq * 4096) +
                             (clock % (freq * 4096) != 0);
@@ -188,7 +188,7 @@ struct {
     // duty 1500mks - mid
     // duty 2000mks - high
     void setMicros(uint32_t micros) {
-        pwm_set_chan_level(slice, channel, wrap * micros / 20000); // given 50Hz or 20_000mks cycle
+        pwm_set_chan_level(slice, channel, wrap * micros / 3000); // given 333Hz or 3000us cycle
     }
 } servo;
 
@@ -283,7 +283,6 @@ void setup_sensor_interrupts() {
     gpio_set_irq_callback(&handle_interrupt);
     irq_set_enabled(IO_IRQ_BANK0, true);
 }
-
 
 // TODO 
 // higher resolution timer
