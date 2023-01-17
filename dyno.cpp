@@ -2,14 +2,13 @@
 #include <stdlib.h>
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
-#include "pico/mutex.h"
 #include "pico/multicore.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
-const uint led_pin = 25;
+#include "RingBuffer.h"
 
 void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
     i2c_init(i2c, 400 * 1000);
@@ -64,77 +63,6 @@ struct {
         gpio_set_dir(reverse, GPIO_IN);
     }
 } buttons;
-
-#define SIZE 64
-
-struct RingBuffer {
-    int32_t head;
-    int32_t tail;
-    bool full;
-    uint32_t measuresNs[SIZE];
-    mutex_t mutex;
-
-    RingBuffer() :
-        head(),
-        tail(),
-        full(false) 
-    {
-        mutex_init(&mutex);
-    }
-
-    void clear() {
-        mutex_enter_blocking(&mutex);
-        head = 0;
-        tail = 0;
-        full = false;
-        mutex_exit(&mutex);
-    }
-
-    void push(uint32_t measure) {
-        mutex_enter_blocking(&mutex);
-        measuresNs[tail] = measure;
-        tail = next(tail);
-        if (full) { // overwrite
-            head = tail;
-        } else {
-            full = (tail == head);
-        }
-        mutex_exit(&mutex);
-    }
-
-    bool pop(uint32_t& prev, uint32_t& curr) { 
-        mutex_enter_blocking(&mutex);
-        bool result = false;
-        if (size() > 1) { // TODO simplify count
-            auto nextHead = next(head);
-            prev = measuresNs[head];
-            curr = measuresNs[nextHead];
-            head = nextHead;
-            full = false;
-            result = true;
-        }
-        mutex_exit(&mutex);
-        return result;
-    }
-
-    uint32_t peek() {
-        mutex_enter_blocking(&mutex);
-        auto res = measuresNs[next(head)];
-        mutex_exit(&mutex);
-        return res;
-    }
-
-    int32_t size() {
-        if (full) return SIZE;
-        auto diff = tail - head;
-        return (diff >= 0) ? diff : diff + 16;
-    }
-
-    inline int32_t next(int32_t i) {
-        auto next = i + 1;
-        return (next == SIZE) ? 0 : next;
-    }
-};
 
 struct Sensor {
     uint pin;
@@ -288,15 +216,10 @@ void setup_sensor_interrupts() {
 
 // TODO 
 // explain gaps in measuring intervals
-// separate files for separate classes
 // faster IO?
 
 int main() {
     stdio_init_all();
-
-    // Initialize LED pin
-    gpio_init(led_pin);
-    gpio_set_dir(led_pin, GPIO_OUT);
 
     // ads1115 ADC address 0x48 (72)
     
