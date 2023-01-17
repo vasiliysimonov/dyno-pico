@@ -145,6 +145,14 @@ struct Sensor {
         pin = _pin;
         last = false;
         gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+        //gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
+        //gpio_set_dir(pin, GPIO_IN);
+        //gpio_pull_up(pin);
+    }
+
+    void reset() {
+        last = gpio_get(pin);
+        measures.clear();
     }
 
     void handle_interrupt(uint32_t time) {
@@ -227,20 +235,15 @@ bool pop3(uint32_t& prev, uint32_t& curr) {
 }
 
 void measure_spool_up(SSD1306 &lcd) {
-    sensorA.measures.clear();
-    sensorB.measures.clear();
-    sensorC.measures.clear();
+    sensorA.reset();
+    sensorB.reset();
+    sensorC.reset();
 
     servo.setMicros(2000);
     auto startUs = time_us_32();
-    int32_t maxLength = 0;
     uint32_t rpm = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
-        maxLength = MAX(sensorA.measures.size(), maxLength);
-        maxLength = MAX(sensorB.measures.size(), maxLength);
-        maxLength = MAX(sensorC.measures.size(), maxLength);
-
         uint32_t diff = 0;
         uint32_t prev;
         uint32_t curr;
@@ -251,7 +254,6 @@ void measure_spool_up(SSD1306 &lcd) {
             if (time > 5000000) { // sec
                 auto rpm = 60000000 / diff;
                 printf("final rpm %d\n", rpm);
-                printf("max length %d\n", maxLength);
                 itoa(rpm, line, 10);
                 display(lcd, line);
                 return;
@@ -273,7 +275,7 @@ void handle_interrupt(uint gpio, uint32_t event_mask) {
         sensorB.handle_interrupt(time);
     } else if (gpio == sensorC.pin) {
         sensorC.handle_interrupt(time);
-    }
+    } 
 }
 
 void setup_sensor_interrupts() {
@@ -285,8 +287,9 @@ void setup_sensor_interrupts() {
 }
 
 // TODO 
-// higher resolution timer
+// explain gaps in measuring intervals
 // separate files for separate classes
+// faster IO?
 
 int main() {
     stdio_init_all();
@@ -327,6 +330,6 @@ int main() {
             servo.setMicros(1500);
         }
         lastThrottle = throttle;
-        sleep_ms(100);
+        sleep_ms(50);
     }
 }
