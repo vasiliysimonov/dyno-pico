@@ -70,22 +70,16 @@ uint32_t time_diff(uint32_t t2, uint32_t t1) {
 
 struct Sensor {
     uint pin;
-    RingBuffer& measures;
+    RingBuffer& buffer;
     uint32_t lastTime;
     bool lastState;
 
-    Sensor(RingBuffer& _buffer) : 
-        measures(_buffer), // TODO rename to buffer
-        lastTime()
+    Sensor(uint _pin, RingBuffer& _buffer) : 
+        pin(_pin),
+        buffer(_buffer)
     {
     }
     
-    void init(uint _pin) {
-        pin = _pin; // TODO move to reset?
-        lastState = false;
-        gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
-    }
-
     void reset() {
         lastState = gpio_get(pin);
         lastTime = 0;
@@ -97,7 +91,7 @@ struct Sensor {
             if (lastTime != 0) {
                 // TODO measure systick     
                 // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
-                measures.push(time, time_diff(time, lastTime));
+                buffer.push(time, time_diff(time, lastTime));
             }
             lastTime = time;
         }
@@ -106,9 +100,9 @@ struct Sensor {
 };
 
 RingBuffer sensorBuffer;
-Sensor sensorA(sensorBuffer);
-Sensor sensorB(sensorBuffer);
-Sensor sensorC(sensorBuffer);
+Sensor sensorA(19, sensorBuffer);
+Sensor sensorB(20, sensorBuffer);
+Sensor sensorC(21, sensorBuffer);
 
 struct {
     const uint pinEsc = 3;
@@ -192,9 +186,10 @@ void handle_interrupt(uint gpio, uint32_t event_mask) {
 }
 
 void setup_sensor_interrupts() {
-    sensorA.init(19);
-    sensorB.init(20);
-    sensorC.init(21);
+    auto flags = GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE;
+    gpio_set_irq_enabled(sensorA.pin, flags, true);
+    gpio_set_irq_enabled(sensorA.pin, flags, true);
+    gpio_set_irq_enabled(sensorA.pin, flags, true);
     gpio_set_irq_callback(&handle_interrupt);
     irq_set_enabled(IO_IRQ_BANK0, true);
 }
