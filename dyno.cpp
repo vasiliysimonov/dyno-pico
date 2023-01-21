@@ -64,39 +64,51 @@ struct {
     }
 } buttons;
 
+uint32_t time_diff(uint32_t t2, uint32_t t1) {
+    return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
+}
+
 struct Sensor {
     uint pin;
-    RingBuffer measures;
-    bool last;
+    RingBuffer& measures;
+    uint32_t lastTime;
+    bool lastState;
+
+    Sensor(RingBuffer& _buffer) : 
+        measures(_buffer), // TODO rename to buffer
+        lastTime()
+    {
+    }
     
     void init(uint _pin) {
-        pin = _pin;
-        last = false;
+        pin = _pin; // TODO move to reset?
+        lastState = false;
         gpio_set_irq_enabled(_pin, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
-        //gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
-        //gpio_set_dir(pin, GPIO_IN);
-        //gpio_pull_up(pin);
     }
 
     void reset() {
-        last = gpio_get(pin);
-        measures.clear();
+        lastState = gpio_get(pin);
+        lastTime = 0;
     }
 
     void handle_interrupt(uint32_t time) {
         bool state = gpio_get(pin);
-        if (state && !last) {
-            // TODO measure systick 
-            // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
-            measures.push(time);
+        if (state && !lastState) { // TODO will it work with edge rise only?
+            if (lastTime != 0) {
+                // TODO measure systick     
+                // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
+                measures.push(time, time_diff(time, lastTime));
+            }
+            lastTime = time;
         }
-        last = state;
+        lastState = state;
     }
 };
 
-Sensor sensorA;
-Sensor sensorB;
-Sensor sensorC;
+RingBuffer sensorBuffer;
+Sensor sensorA(sensorBuffer);
+Sensor sensorB(sensorBuffer);
+Sensor sensorC(sensorBuffer);
 
 struct {
     const uint pinEsc = 3;
@@ -128,10 +140,6 @@ struct {
     }
 } servo;
 
-uint32_t time_diff(uint32_t t2, uint32_t t1) {
-    return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
-}
-
 void display(SSD1306 &lcd, const char* line) {
     lcd.clear();
     drawText(&lcd, font_12x16, line, 0, 12);        
@@ -140,55 +148,32 @@ void display(SSD1306 &lcd, const char* line) {
 
 #define SWAP(a, b) { auto t = a; a = b; b = t; }
 
-bool pop3(uint32_t& prev, uint32_t& curr) {
-    uint32_t peeks[] = { sensorA.measures.peek(), sensorB.measures.peek(), sensorC.measures.peek() };
-    RingBuffer* sensors[] = { &sensorA.measures, &sensorB.measures, &sensorC.measures };
-    if (peeks[0] > peeks[2]) {
-        SWAP(peeks[0], peeks[2]);
-        SWAP(sensors[0], sensors[2]);
-    }
-    if (peeks[0] > peeks[1]) {
-        SWAP(peeks[0], peeks[1]);
-        SWAP(sensors[0], sensors[1]);
-    }
-    if (sensors[0]->pop(prev, curr)) return true;
-
-    if (peeks[1] > peeks[2]) {
-        SWAP(peeks[1], peeks[2]);
-        SWAP(sensors[1], sensors[2]);
-    }
-    if (sensors[1]->pop(prev, curr)) return true;
-    if (sensors[2]->pop(prev, curr)) return true;
-    return false;
-}
-
 void measure_spool_up(SSD1306 &lcd) {
+    sensorBuffer.clear();
     sensorA.reset();
     sensorB.reset();
     sensorC.reset();
 
     servo.setMicros(2000);
-    auto startUs = time_us_32();
+    auto startTime = time_us_32();
     uint32_t rpm = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
-        uint32_t diff = 0;
-        uint32_t prev;
-        uint32_t curr;
-        while (pop3(prev, curr)) {
-            auto time = time_diff(curr, startUs);
-            diff = time_diff(curr, prev);
-            printf("%d,%d\n", time, diff);
-            if (time > 5000000) { // sec
-                auto rpm = 60000000 / diff;
+        uint32_t time;
+        uint32_t delta = 0;
+        while (sensorBuffer.pop(time, delta)) {
+            auto elapsed = time_diff(time, startTime);
+            printf("%d,%d\n", elapsed, delta);
+            if (elapsed > 5000000) { // sec
+                auto rpm = 60000000 / delta;
                 printf("final rpm %d\n", rpm);
                 itoa(rpm, line, 10);
                 display(lcd, line);
                 return;
             }
         }
-        if (diff != 0) {
-            auto rpm = 60000000 / diff;
+        if (delta != 0) { // TODO limit the update rate
+            auto rpm = 60000000 / delta;
             itoa(rpm, line, 10);
             display(lcd, line);
         }
