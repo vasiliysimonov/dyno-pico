@@ -150,26 +150,28 @@ void measure_spool_up(SSD1306 &lcd) {
 
     servo.setMicros(2000);
     auto startTime = time_us_32();
-    uint32_t rpm = 0;
+    uint32_t smoothRpm = 0;
+    uint32_t lastLcd = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
-        uint32_t time;
+        uint32_t timestamp;
         uint32_t delta = 0;
-        while (sensorBuffer.pop(time, delta)) {
-            auto elapsed = time_diff(time, startTime);
+        uint32_t elapsed = 0;
+        while (sensorBuffer.pop(timestamp, delta)) {
+            elapsed = time_diff(timestamp, startTime);
+            smoothRpm = (15 * smoothRpm + 60000000 / delta) / 16;
             printf("%d,%d\n", elapsed, delta);
-            if (elapsed > 5000000) { // sec
-                auto rpm = 60000000 / delta;
-                printf("final rpm %d\n", rpm);
-                itoa(rpm, line, 10);
+            if (elapsed > 4000000) { // sec
+                printf("final rpm %d\n", smoothRpm);
+                itoa(smoothRpm, line, 10);
                 display(lcd, line);
                 return;
             }
         }
-        if (delta != 0) { // TODO limit the update rate
-            auto rpm = 60000000 / delta;
-            itoa(rpm, line, 10);
+        if (elapsed != 0 && time_diff(elapsed, lastLcd) > 33333) { // 33ms or 30fps
+            itoa(smoothRpm, line, 10);
             display(lcd, line);
+            lastLcd = elapsed;
         }
     }
 }
