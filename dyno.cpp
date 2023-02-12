@@ -5,6 +5,7 @@
 #include "pico/multicore.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
+#include "hardware/adc.h"
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
@@ -53,8 +54,8 @@ void i2c_scan_address() {
 using namespace pico_ssd1306;
 
 struct {
-    const uint throttle = 16;
-    const uint reverse = 15;
+    const uint throttle = 15;
+    const uint reverse = 10;
 
     void init() {
         gpio_pull_up(throttle);
@@ -105,7 +106,7 @@ Sensor sensorB(20, sensorBuffer);
 Sensor sensorC(21, sensorBuffer);
 
 struct {
-    const uint pinEsc = 3;
+    const uint pinEsc = 0;
     uint slice;
     uint channel;
     uint16_t wrap;
@@ -136,7 +137,7 @@ struct {
 
 void display(SSD1306 &lcd, const char* line) {
     lcd.clear();
-    drawText(&lcd, font_12x16, line, 0, 12);        
+    drawText(&lcd, font_12x16, line, 0, 8);        
     lcd.sendBuffer();
 }
 
@@ -200,19 +201,27 @@ void setup_sensor_interrupts() {
 // explain gaps in measuring intervals
 // faster IO?
 
+//const uint tempreturePin = 26;
+
 int main() {
     stdio_init_all();
-
+    
     // ads1115 ADC address 0x48 (72)
     
+    
     // init display
-    i2c_setup(i2c0, 12, 13);
+    i2c_setup(i2c1, 6, 7);
     sleep_ms(250);
-    SSD1306 lcd = SSD1306(i2c0, 0x3C, Size::W128xH32);
-    lcd.setOrientation(0);
+    SSD1306 lcd = SSD1306(i2c1, 0x3C, Size::W128xH32);
+    lcd.setOrientation(1);
+    display(lcd, "0");
     
     buttons.init();
     servo.init();
+
+    //adc_init();
+    //adc_gpio_init(tempreturePin);
+    //adc_select_input(0);
 
     // interrups on second core
     multicore_launch_core1(&setup_sensor_interrupts);
@@ -221,6 +230,7 @@ int main() {
 
     display(lcd, "0");
     bool lastThrottle = false;
+    //float Rsmooth = 0.0f;
     for (int i = 0; true; i++) { 
         // process buttons
         bool throttle = !gpio_get(buttons.throttle);
@@ -235,6 +245,24 @@ int main() {
             servo.setMicros(1500);
         }
         lastThrottle = throttle;
+
+        /*
+        char str[17];
+        const float conversion_factor = 3.3f / (1 << 12);
+        uint16_t result = adc_read();
+        float volt = result * conversion_factor;
+        float r = 10000 * volt / (3.3f - volt);
+        if (Rsmooth == 0.0f) {
+            Rsmooth = r;
+        } else {
+            Rsmooth = (Rsmooth * 127 + r) / 128;
+        }
+        sprintf(str, "%.0f", Rsmooth);
+        lcd.clear();
+        drawText(&lcd, font_12x16, str, 0, 0);
+        drawText(&lcd, font_12x16, "line 2", 0, 18);
+        lcd.sendBuffer();
+        */
         sleep_ms(50);
     }
 }
