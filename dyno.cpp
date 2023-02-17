@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "pico/multicore.h"
@@ -141,7 +142,19 @@ void display(SSD1306 &lcd, const char* line) {
     lcd.sendBuffer();
 }
 
-#define SWAP(a, b) { auto t = a; a = b; b = t; }
+uint32_t gSmoothRpm = 0;
+float gSmoothTemperature = 0.0f;
+
+void update_lcd(SSD1306 &lcd) {
+    lcd.clear();
+    char line[17];
+    itoa(gSmoothRpm, line, 10);
+    drawText(&lcd, font_12x16, line, 0, 0);  
+
+    sprintf(line, "%.1fC", gSmoothTemperature);
+    drawText(&lcd, font_12x16, line, 0, 18);
+    lcd.sendBuffer();
+}
 
 void measure_spool_up(SSD1306 &lcd) {
     sensorBuffer.clear();
@@ -151,8 +164,8 @@ void measure_spool_up(SSD1306 &lcd) {
 
     servo.setMicros(2000);
     auto startTime = time_us_32();
-    uint32_t smoothRpm = 0;
     uint32_t lastLcd = 0;
+    uint32_t count = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
         uint32_t timestamp;
@@ -160,18 +173,17 @@ void measure_spool_up(SSD1306 &lcd) {
         uint32_t elapsed = 0;
         while (sensorBuffer.pop(timestamp, delta)) {
             elapsed = time_diff(timestamp, startTime);
-            smoothRpm = (15 * smoothRpm + 60000000 / delta) / 16;
+            if (count < 16) ++count;
+            gSmoothRpm = ((count - 1) * gSmoothRpm + 60000000 / delta) / count;
             printf("%d,%d\n", elapsed, delta);
             if (elapsed > 4000000) { // sec
-                printf("final rpm %d\n", smoothRpm);
-                itoa(smoothRpm, line, 10);
-                display(lcd, line);
+                printf("final rpm %d\n", gSmoothRpm);
+                update_lcd(lcd);
                 return;
             }
         }
         if (elapsed != 0 && time_diff(elapsed, lastLcd) > 33333) { // 33ms or 30fps
-            itoa(smoothRpm, line, 10);
-            display(lcd, line);
+            update_lcd(lcd);
             lastLcd = elapsed;
         }
     }
@@ -201,13 +213,23 @@ void setup_sensor_interrupts() {
 // explain gaps in measuring intervals
 // faster IO?
 
-//const uint tempreturePin = 26;
+const uint tempreturePin = 26;
+
+float voltage_to_degrees(uint16_t adc) {
+    const float r1 = 9811.00872f;
+    const float a = 7.49510291e-04f;
+    const float b = 3.39853521e-04f;
+    const float c = -6.07716855e-07f;
+    const float conversionFactor = 3.3f / (1 << 12);
+    float volt = adc * conversionFactor;
+    float lnR = log(r1 * volt / (3.3f - volt));
+    return 1 / (a + b * lnR + c * lnR * lnR * lnR) - 273.15;
+}
 
 int main() {
     stdio_init_all();
     
     // ads1115 ADC address 0x48 (72)
-    
     
     // init display
     i2c_setup(i2c1, 6, 7);
@@ -219,9 +241,9 @@ int main() {
     buttons.init();
     servo.init();
 
-    //adc_init();
-    //adc_gpio_init(tempreturePin);
-    //adc_select_input(0);
+    adc_init();
+    adc_gpio_init(tempreturePin);
+    adc_select_input(0);
 
     // interrups on second core
     multicore_launch_core1(&setup_sensor_interrupts);
@@ -230,7 +252,7 @@ int main() {
 
     display(lcd, "0");
     bool lastThrottle = false;
-    //float Rsmooth = 0.0f;
+    uint32_t count = 0;
     for (int i = 0; true; i++) { 
         // process buttons
         bool throttle = !gpio_get(buttons.throttle);
@@ -246,23 +268,12 @@ int main() {
         }
         lastThrottle = throttle;
 
-        /*
-        char str[17];
-        const float conversion_factor = 3.3f / (1 << 12);
-        uint16_t result = adc_read();
-        float volt = result * conversion_factor;
-        float r = 10000 * volt / (3.3f - volt);
-        if (Rsmooth == 0.0f) {
-            Rsmooth = r;
-        } else {
-            Rsmooth = (Rsmooth * 127 + r) / 128;
-        }
-        sprintf(str, "%.0f", Rsmooth);
-        lcd.clear();
-        drawText(&lcd, font_12x16, str, 0, 0);
-        drawText(&lcd, font_12x16, "line 2", 0, 18);
-        lcd.sendBuffer();
-        */
+        if (count < 32) ++count; 
+        float t = voltage_to_degrees(adc_read());
+        gSmoothTemperature = (gSmoothTemperature * (count - 1) + t) / count;
+
+        update_lcd(lcd);
+
         sleep_ms(50);
     }
 }
