@@ -18,8 +18,11 @@ add_subdirectory(pico-ssd1306) # clone https://github.com/Harbys/pico-ssd1306.gi
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
-    dyno.cpp
+    # dyno.cpp TODO commented out while experimenting with PIO
+    pio-rpm.cpp
 )
+
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
 
 # Create map/bin/hex/uf2 files
 pico_add_extra_outputs(${PROJECT_NAME})
@@ -30,7 +33,8 @@ target_link_libraries(${PROJECT_NAME}
     pico_multicore
     hardware_i2c
     hardware_pwm
-    hardware_adc 
+    hardware_adc
+    hardware_pio 
     pico_ssd1306
 )
 
