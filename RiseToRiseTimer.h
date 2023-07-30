@@ -11,6 +11,7 @@ public:
 private:
     PIO pio;
     uint stateMachine;
+    uint32_t nsInTick;
 };
 
 #endif

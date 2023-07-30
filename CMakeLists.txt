@@ -37,6 +37,7 @@ target_link_libraries(${PROJECT_NAME}
     hardware_adc
     hardware_pio 
     pico_ssd1306
+    hardware_clocks
 )
 
 # Enable usb output, disable uart output
