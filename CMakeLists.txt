@@ -20,9 +20,10 @@ add_subdirectory(pico-ssd1306) # clone https://github.com/Harbys/pico-ssd1306.gi
 add_executable(${PROJECT_NAME} 
     # dyno.cpp TODO commented out while experimenting with PIO
     pio-rpm.cpp
+    RiseToRiseTimer.cpp
 )
 
-pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/PwmIn.pio)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/RiseToRise.pio)
 
 # Create map/bin/hex/uf2 files
 pico_add_extra_outputs(${PROJECT_NAME})
