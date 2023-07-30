@@ -41,36 +41,11 @@ public:
         pio_sm_set_enabled(pio, sm, true);
     }
 
-    // read_period (in seconds)
-    float read_period(void)
-    {
+    uint32_t read_period() {
         read();
         // one clock cycle is 1/125000000 seconds
-        return (period * 0.000000008);
-    }
-
-    // read_pulsewidth (in seconds)
-    float read_pulsewidth(void)
-    {
-        read();
-        // one clock cycle is 1/125000000 seconds
-        return (pulsewidth * 0.000000008);
-    }
-
-    // read_dutycycle (between 0 and 1)
-    float read_dutycycle(void)
-    {
-        read();
-        return ((float)pulsewidth / (float)period);
-    }
-
-    // read pulsewidth and period for one pulse
-    void read_PWM(float *readings)
-    {
-        read();
-        *(readings + 0) = (float)pulsewidth * 0.000000008;
-        *(readings + 1) = (float)period * 0.000000008;
-        *(readings + 2) = ((float)pulsewidth / (float)period);
+        auto msPerClock = 8; // at 125000000Hz
+        return period * msPerClock;
     }
 
 private:
@@ -83,7 +58,7 @@ private:
         while (pio_sm_get_rx_fifo_level(pio, sm) < 2)
             ;
         // read pulse width from the FIFO
-        pulsewidth = pio_sm_get(pio, sm);
+        uint32_t pulsewidth = pio_sm_get(pio, sm);
         // read period from the FIFO
         period = pio_sm_get(pio, sm) + pulsewidth;
         // the measurements are taken with 2 clock cycles per timer tick
@@ -96,21 +71,22 @@ private:
     // the state machine
     uint sm;
     // data about the PWM input measured in pio clock cycles
-    uint32_t pulsewidth, period;
+    uint32_t period;
 };
 
 struct {
-    const uint pinEsc = 0;
+    uint pinEsc;
     uint slice;
     uint channel;
     uint16_t wrap;
 
-    void init() {
+    void init(uint pin) {
+        pinEsc = pin;
         gpio_set_function(pinEsc, GPIO_FUNC_PWM);
         slice = pwm_gpio_to_slice_num(pinEsc);
         channel = pwm_gpio_to_channel(pinEsc);
         // servo cycle is 3000mks or 333Hz 
-        uint32_t freq = 333;
+        uint32_t freq = 50;//333;
         uint32_t clock = 125000000;
         uint32_t divider16 = clock / (freq * 4096) +
                             (clock % (freq * 4096) != 0);
@@ -125,26 +101,26 @@ struct {
     // duty 1500mks - mid
     // duty 2000mks - high
     void setMicros(uint32_t micros) {
-        pwm_set_chan_level(slice, channel, wrap * micros / 3000); // given 333Hz or 3000us cycle
+        pwm_set_chan_level(slice, channel, wrap * micros / 20000/*3000*/); // given 333Hz or 3000us cycle
     }
 } servo;
 
 int main() {
-    servo.init();
-    servo.setMicros(1500);
-
-    // needed for printf
     stdio_init_all();
+    
+    servo.init(0);
+    servo.setMicros(500);
+
     // the instance of the PwmIn
     PwmIn my_PwmIn(14);
-    // the array with the results
-    float pwm_reading[3];
     // infinite loop to print PWM measurements
     while (true) {
-        my_PwmIn.read_PWM(pwm_reading);
-        if (pwm_reading[0] >= 0.)
+        auto perNano = my_PwmIn.read_period();
+        if (perNano >= 0)
         {
-            printf("pw=%.8f \tp=%.8f \tdc=%.8f\n", pwm_reading[0], pwm_reading[1], pwm_reading[2]);
+            //auto pwUs = (pwNano + 999) / 1000;
+            //auto perUs = (perNano + 999) / 1000;
+            printf("period=%dns\n", perNano);
         }
         sleep_ms(100);
     }
