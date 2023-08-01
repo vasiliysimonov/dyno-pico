@@ -11,6 +11,7 @@
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
 #include "RingBuffer.h"
+#include "RiseToRiseTimer.h"
 
 void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
     i2c_init(i2c, 400 * 1000);
@@ -162,12 +163,19 @@ void measure_spool_up(SSD1306 &lcd) {
     sensorB.reset();
     sensorC.reset();
 
+    RiseToRiseTimer pioTimer(sensorA.pin);
+
     servo.setMicros(2000);
     auto startTime = time_us_32();
     uint32_t lastLcd = 0;
     uint32_t count = 0;
     char line[17];
     while (!gpio_get(buttons.throttle)) {
+        uint32_t period;
+        while (pioTimer.readPeriod(period)) {
+            printf("pio %d\n", period);
+        }
+
         uint32_t timestamp;
         uint32_t delta = 0;
         uint32_t elapsed = 0;
@@ -182,10 +190,12 @@ void measure_spool_up(SSD1306 &lcd) {
                 return;
             }
         }
+        /*
         if (elapsed != 0 && time_diff(elapsed, lastLcd) > 33333) { // 33ms or 30fps
             update_lcd(lcd);
             lastLcd = elapsed;
         }
+        */
     }
 }
 

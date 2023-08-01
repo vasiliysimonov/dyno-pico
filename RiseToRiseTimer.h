@@ -8,6 +8,7 @@ public:
     RiseToRiseTimer(PIO pio, uint stateMachine, uint inputPin);
     RiseToRiseTimer(uint inputPin);
     bool readPeriod(uint32_t& outPeriodNs);
+    ~RiseToRiseTimer();
 private:
     PIO pio;
     uint stateMachine;

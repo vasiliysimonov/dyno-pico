@@ -18,8 +18,8 @@ add_subdirectory(pico-ssd1306) # clone https://github.com/Harbys/pico-ssd1306.gi
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
-    # dyno.cpp TODO commented out while experimenting with PIO
-    pio-rpm.cpp
+    dyno.cpp
+    # pio-rpm.cpp
     RiseToRiseTimer.cpp
 )
 
