@@ -219,6 +219,19 @@ void setup_sensor_interrupts() {
     irq_set_enabled(IO_IRQ_BANK0, true);
 }
 
+SSD1306* lcd = nullptr;
+
+void print_lcd_updates() {
+    uint32_t lastRpm = 0;
+    while (true) {
+        sleep_ms(33);
+        auto localRpm = gSmoothRpm;
+        if (localRpm == lastRpm) continue;
+        if (lcd != nullptr) update_lcd(*lcd);
+        lastRpm = localRpm;
+    }
+}
+
 // TODO 
 // explain gaps in measuring intervals
 // faster IO?
@@ -244,9 +257,9 @@ int main() {
     // init display
     i2c_setup(i2c1, 6, 7);
     sleep_ms(250);
-    SSD1306 lcd = SSD1306(i2c1, 0x3C, Size::W128xH32);
-    lcd.setOrientation(1);
-    display(lcd, "0");
+    lcd = new SSD1306(i2c1, 0x3C, Size::W128xH32);
+    lcd->setOrientation(1);
+    display(*lcd, "0");
     
     buttons.init();
     servo.init();
@@ -255,12 +268,12 @@ int main() {
     adc_gpio_init(tempreturePin);
     adc_select_input(0);
 
-    // interrups on second core
-    multicore_launch_core1(&setup_sensor_interrupts);
+    // lcd on second core
+    multicore_launch_core1(&print_lcd_updates);
     
     // ads1115 ADC address 0x48 (72)
 
-    display(lcd, "0");
+    display(*lcd, "0");
     bool lastThrottle = false;
     uint32_t count = 0;
     for (int i = 0; true; i++) { 
@@ -269,7 +282,7 @@ int main() {
         bool reverse = !gpio_get(buttons.reverse);
 
         if (!lastThrottle && throttle) {
-            measure_spool_up(lcd);
+            measure_spool_up(*lcd);
             servo.setMicros(1500);
         } else if (reverse) {
             servo.setMicros(1000);
@@ -282,7 +295,7 @@ int main() {
         float t = voltage_to_degrees(adc_read());
         gSmoothTemperature = (gSmoothTemperature * (count - 1) + t) / count;
 
-        update_lcd(lcd);
+        update_lcd(*lcd);
 
         sleep_ms(50);
     }
