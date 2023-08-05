@@ -20,7 +20,6 @@ PioTimer::PioTimer(PIO pio, uint stateMachine, uint inputPin, PioTimer::Type typ
     sm_config_set_jmp_pin(&config, inputPin);
     sm_config_set_in_shift(&config, false, false, 0);
     pio_sm_init(pio, stateMachine, offset, &config);
-    pio_sm_clear_fifos(pio, stateMachine);
 }
 
 bool PioTimer::readPeriod(uint32_t& outPeriodNs) {

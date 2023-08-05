@@ -1,3 +1,5 @@
+#define PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS 1000
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -146,35 +148,37 @@ void print_lcd_updates() {
     SSD1306 lcd = SSD1306(i2c1, 0x3C, Size::W128xH32);
     lcd.setOrientation(1);
 
-    float lastRpm = 0;
-    float lastTemp = 0;
     while (true) {
-        sleep_ms(33);
-        auto localRpm = smoothRpm.get();
-        auto localTemp = smoothTemperature.get();
-        if (localRpm == lastRpm && localRpm == lastTemp) continue;
         update_lcd(lcd);
-        lastRpm = localRpm;
-        lastTemp = localTemp;
+        sleep_ms(66);
     }
 }
 
 void measure_spool_up() {
-    PioTimer pioTimer(pio0, 0, PIN_SENSOR_A, PioTimer::TYPE_RAISING_EDGE);
+    PioTimer timers[] {
+        PioTimer(pio0, 0, PIN_SENSOR_A, PioTimer::TYPE_RAISING_EDGE),
+        PioTimer(pio0, 1, PIN_SENSOR_B, PioTimer::TYPE_RAISING_EDGE),
+        PioTimer(pio0, 2, PIN_SENSOR_C, PioTimer::TYPE_RAISING_EDGE)
+    };
+    const char* timerNames[] {"ar", "br", "cr"};
+    const uint32_t numTimers = 3;
+    const uint32_t mask = 0x7;
     smoothRpm.reset(0);
 
     servo.setMicros(2000);
-    pio_sm_set_enabled(pio0, 0, true); // todo enable many state machines at once
-    uint32_t elapsedNs = 0;
+    pio_set_sm_mask_enabled(pio0, mask, true);
+    uint32_t startTime = time_us_32();
     while (button_is_pressed(PIN_BUTTON_THROTTLE)) { // TODO several button reads
         uint32_t periodNs;
-        while (pioTimer.readPeriod(periodNs)) {
+        for (int i = 0; i < numTimers; i++) {
+            if (!timers[i].readPeriod(periodNs)) continue;
+            fprintf(stdout, "%s %d\n", timerNames[i], periodNs);
             smoothRpm.update(60E+9f / periodNs);
-            printf("ar %d\n", periodNs); // TODO name each sensor
-            elapsedNs += periodNs;
-            if (elapsedNs > 4000000000) { // 4 sec
-                pio_sm_set_enabled(pio0, 0, false); // todo disable many state machines at once
-                printf("final rpm %d\n", smoothRpm.get());
+            if (time_us_32() - startTime > 4 * 1000000) {
+                pio_set_sm_mask_enabled(pio0, mask, false);
+                if (pio0->fdebug != 0) fprintf(stdout, "pio debug %x\n", pio0->fdebug);
+                fprintf(stdout, "final rpm %.0f\n", smoothRpm.get());
+                fflush(stdout);
                 return;
             }
         }
@@ -183,7 +187,6 @@ void measure_spool_up() {
 
 // TODO 
 // explain gaps in measuring intervals
-// faster IO?
 
 float voltage_to_degrees(uint16_t adc) {
     const float r1 = 9811.00872f;
@@ -200,10 +203,7 @@ int main() {
     stdio_init_all();
     
     // ads1115 ADC address 0x48 (72)
-    
-    // init display
-    
-    
+        
     button_init(PIN_BUTTON_THROTTLE);
     button_init(PIN_BUTTON_REVERSE);
     servo.init(PIN_ESC);
@@ -215,8 +215,6 @@ int main() {
     // lcd on second core
     multicore_launch_core1(&print_lcd_updates);
     
-    // ads1115 ADC address 0x48 (72)
-
     bool lastThrottle = false;
     while (true) { 
         // process buttons
