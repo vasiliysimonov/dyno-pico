@@ -11,7 +11,45 @@
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
 #include "RingBuffer.h"
-#include "RiseToRiseTimer.h"
+#include "PioTimer.h"
+
+using namespace pico_ssd1306;
+
+const uint PIN_BUTTON_THROTTLE = 15;
+const uint PIN_BUTTON_REVERSE = 10;
+const uint PIN_SENSOR_A = 19;
+const uint PIN_SENSOR_B = 20;
+const uint PIN_SENSOR_C = 21;
+const uint PIN_ESC = 0;
+const uint PIN_ADC_TEMPERATURE = 26;
+
+class EMA { // Exponential Moving Average
+public:
+    EMA(uint32_t period) : period(period) {
+    }
+
+    void update(float measurement) {
+        if (count < period) ++count;
+        value = ((count - 1) * value + measurement) / count;
+    }
+
+    void reset(float v) {
+        value = v;
+        count = 0;
+    }
+
+    float get() {
+        return value;
+    }
+
+private:
+    volatile float value;
+    uint32_t count;
+    uint32_t period;
+};
+
+EMA smoothRpm(16);
+EMA smoothTemperature(32);
 
 void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
     i2c_init(i2c, 400 * 1000);
@@ -53,70 +91,24 @@ void i2c_scan_address() {
     printf("Done.\n");
 }
 
-using namespace pico_ssd1306;
-
-struct {
-    const uint throttle = 15;
-    const uint reverse = 10;
-
-    void init() {
-        gpio_pull_up(throttle);
-        gpio_set_dir(throttle, GPIO_IN);
-        gpio_pull_up(reverse);
-        gpio_set_dir(reverse, GPIO_IN);
-    }
-} buttons;
-
-uint32_t time_diff(uint32_t t2, uint32_t t1) {
-    return (t2 >= t1) ? t2 - t1 : 0xFFFFFFFF - t1 + t2;
+void button_init(uint pin) {
+    gpio_pull_up(pin);
+    gpio_set_dir(pin, GPIO_IN);
 }
 
-struct Sensor {
-    uint pin;
-    RingBuffer& buffer;
-    uint32_t lastTime;
-    bool lastState;
-
-    Sensor(uint _pin, RingBuffer& _buffer) : 
-        pin(_pin),
-        buffer(_buffer)
-    {
-    }
-    
-    void reset() {
-        lastState = gpio_get(pin);
-        lastTime = 0;
-    }
-
-    void handle_interrupt(uint32_t time) {
-        bool state = gpio_get(pin);
-        if (state && !lastState) { // TODO will it work with edge rise only?
-            if (lastTime != 0) {
-                // TODO measure systick     
-                // https://forums.raspberrypi.com/viewtopic.php?f=145&t=304201&p=1820770&hilit=Hermannsw+systick#p1822677
-                buffer.push(time, time_diff(time, lastTime));
-            }
-            lastTime = time;
-        }
-        lastState = state;
-    }
-};
-
-RingBuffer sensorBuffer;
-Sensor sensorA(19, sensorBuffer);
-Sensor sensorB(20, sensorBuffer);
-Sensor sensorC(21, sensorBuffer);
+bool button_is_pressed(uint pin) {
+    return !gpio_get(pin);
+}
 
 struct {
-    const uint pinEsc = 0;
     uint slice;
     uint channel;
     uint16_t wrap;
 
-    void init() {
-        gpio_set_function(pinEsc, GPIO_FUNC_PWM);
-        slice = pwm_gpio_to_slice_num(pinEsc);
-        channel = pwm_gpio_to_channel(pinEsc);
+    void init(uint pin) {
+        gpio_set_function(pin, GPIO_FUNC_PWM);
+        slice = pwm_gpio_to_slice_num(pin);
+        channel = pwm_gpio_to_channel(pin);
         // servo cycle is 3000mks or 333Hz 
         uint32_t freq = 333;
         uint32_t clock = 125000000;
@@ -137,106 +129,61 @@ struct {
     }
 } servo;
 
-void display(SSD1306 &lcd, const char* line) {
-    lcd.clear();
-    drawText(&lcd, font_12x16, line, 0, 8);        
-    lcd.sendBuffer();
-}
-
-uint32_t gSmoothRpm = 0;
-float gSmoothTemperature = 0.0f;
-
 void update_lcd(SSD1306 &lcd) {
-    lcd.clear();
+    lcd.clear(); // TODO don't clear?
     char line[17];
-    itoa(gSmoothRpm, line, 10);
+    sprintf(line, "%.0f", smoothRpm.get());
     drawText(&lcd, font_12x16, line, 0, 0);  
 
-    sprintf(line, "%.1fC", gSmoothTemperature);
+    sprintf(line, "%.1fC", smoothTemperature.get());
     drawText(&lcd, font_12x16, line, 0, 18);
     lcd.sendBuffer();
 }
 
-void measure_spool_up(SSD1306 &lcd) {
-    sensorBuffer.clear();
-    sensorA.reset();
-    sensorB.reset();
-    sensorC.reset();
+void print_lcd_updates() {
+    i2c_setup(i2c1, 6, 7);
+    sleep_ms(250);
+    SSD1306 lcd = SSD1306(i2c1, 0x3C, Size::W128xH32);
+    lcd.setOrientation(1);
 
-    RiseToRiseTimer pioTimer(sensorA.pin);
-
-    servo.setMicros(2000);
-    auto startTime = time_us_32();
-    uint32_t lastLcd = 0;
-    uint32_t count = 0;
-    char line[17];
-    while (!gpio_get(buttons.throttle)) {
-        uint32_t period;
-        while (pioTimer.readPeriod(period)) {
-            printf("pio %d\n", period);
-        }
-
-        uint32_t timestamp;
-        uint32_t delta = 0;
-        uint32_t elapsed = 0;
-        while (sensorBuffer.pop(timestamp, delta)) {
-            elapsed = time_diff(timestamp, startTime);
-            if (count < 16) ++count;
-            gSmoothRpm = ((count - 1) * gSmoothRpm + 60000000 / delta) / count;
-            printf("%d,%d\n", elapsed, delta);
-            if (elapsed > 4000000) { // sec
-                printf("final rpm %d\n", gSmoothRpm);
-                update_lcd(lcd);
-                return;
-            }
-        }
-        /*
-        if (elapsed != 0 && time_diff(elapsed, lastLcd) > 33333) { // 33ms or 30fps
-            update_lcd(lcd);
-            lastLcd = elapsed;
-        }
-        */
+    float lastRpm = 0;
+    float lastTemp = 0;
+    while (true) {
+        sleep_ms(33);
+        auto localRpm = smoothRpm.get();
+        auto localTemp = smoothTemperature.get();
+        if (localRpm == lastRpm && localRpm == lastTemp) continue;
+        update_lcd(lcd);
+        lastRpm = localRpm;
+        lastTemp = localTemp;
     }
 }
 
-void handle_interrupt(uint gpio, uint32_t event_mask) {
-    auto time = time_us_32();
-    if (gpio == sensorA.pin) {
-        sensorA.handle_interrupt(time);
-    } else if (gpio == sensorB.pin) {
-        sensorB.handle_interrupt(time);
-    } else if (gpio == sensorC.pin) {
-        sensorC.handle_interrupt(time);
-    } 
-}
+void measure_spool_up() {
+    PioTimer pioTimer(pio0, 0, PIN_SENSOR_A, PioTimer::TYPE_RAISING_EDGE);
+    smoothRpm.reset(0);
 
-void setup_sensor_interrupts() {
-    auto flags = GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE;
-    gpio_set_irq_enabled(sensorA.pin, flags, true);
-    gpio_set_irq_enabled(sensorA.pin, flags, true);
-    gpio_set_irq_enabled(sensorA.pin, flags, true);
-    gpio_set_irq_callback(&handle_interrupt);
-    irq_set_enabled(IO_IRQ_BANK0, true);
-}
-
-SSD1306* lcd = nullptr;
-
-void print_lcd_updates() {
-    uint32_t lastRpm = 0;
-    while (true) {
-        sleep_ms(33);
-        auto localRpm = gSmoothRpm;
-        if (localRpm == lastRpm) continue;
-        if (lcd != nullptr) update_lcd(*lcd);
-        lastRpm = localRpm;
+    servo.setMicros(2000);
+    pio_sm_set_enabled(pio0, 0, true); // todo enable many state machines at once
+    uint32_t elapsedNs = 0;
+    while (button_is_pressed(PIN_BUTTON_THROTTLE)) { // TODO several button reads
+        uint32_t periodNs;
+        while (pioTimer.readPeriod(periodNs)) {
+            smoothRpm.update(60E+9f / periodNs);
+            printf("ar %d\n", periodNs); // TODO name each sensor
+            elapsedNs += periodNs;
+            if (elapsedNs > 4000000000) { // 4 sec
+                pio_sm_set_enabled(pio0, 0, false); // todo disable many state machines at once
+                printf("final rpm %d\n", smoothRpm.get());
+                return;
+            }
+        }
     }
 }
 
 // TODO 
 // explain gaps in measuring intervals
 // faster IO?
-
-const uint tempreturePin = 26;
 
 float voltage_to_degrees(uint16_t adc) {
     const float r1 = 9811.00872f;
@@ -255,17 +202,14 @@ int main() {
     // ads1115 ADC address 0x48 (72)
     
     // init display
-    i2c_setup(i2c1, 6, 7);
-    sleep_ms(250);
-    lcd = new SSD1306(i2c1, 0x3C, Size::W128xH32);
-    lcd->setOrientation(1);
-    display(*lcd, "0");
     
-    buttons.init();
-    servo.init();
+    
+    button_init(PIN_BUTTON_THROTTLE);
+    button_init(PIN_BUTTON_REVERSE);
+    servo.init(PIN_ESC);
 
     adc_init();
-    adc_gpio_init(tempreturePin);
+    adc_gpio_init(PIN_ADC_TEMPERATURE);
     adc_select_input(0);
 
     // lcd on second core
@@ -273,16 +217,14 @@ int main() {
     
     // ads1115 ADC address 0x48 (72)
 
-    display(*lcd, "0");
     bool lastThrottle = false;
-    uint32_t count = 0;
-    for (int i = 0; true; i++) { 
+    while (true) { 
         // process buttons
-        bool throttle = !gpio_get(buttons.throttle);
-        bool reverse = !gpio_get(buttons.reverse);
+        bool throttle = button_is_pressed(PIN_BUTTON_THROTTLE);
+        bool reverse = button_is_pressed(PIN_BUTTON_REVERSE);
 
         if (!lastThrottle && throttle) {
-            measure_spool_up(*lcd);
+            measure_spool_up();
             servo.setMicros(1500);
         } else if (reverse) {
             servo.setMicros(1000);
@@ -291,11 +233,8 @@ int main() {
         }
         lastThrottle = throttle;
 
-        if (count < 32) ++count; 
         float t = voltage_to_degrees(adc_read());
-        gSmoothTemperature = (gSmoothTemperature * (count - 1) + t) / count;
-
-        update_lcd(*lcd);
+        smoothTemperature.update(t);
 
         sleep_ms(50);
     }

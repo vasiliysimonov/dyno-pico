@@ -3,12 +3,16 @@
 
 #include "hardware/pio.h"
 
-class RiseToRiseTimer {
+class PioTimer {
 public:
-    RiseToRiseTimer(PIO pio, uint stateMachine, uint inputPin);
-    RiseToRiseTimer(uint inputPin);
+    enum Type{
+        TYPE_FALLING_EDGE,
+        TYPE_RAISING_EDGE
+    };
+
+    PioTimer(PIO pio, uint stateMachine, uint inputPin, Type type);
     bool readPeriod(uint32_t& outPeriodNs);
-    ~RiseToRiseTimer();
+    ~PioTimer();
 private:
     PIO pio;
     uint stateMachine;

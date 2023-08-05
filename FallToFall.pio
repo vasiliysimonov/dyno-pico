@@ -1,0 +1,15 @@
+; period should be less than 0xffffffff / 125Mhz about 34sec
+.program FallToFall
+
+.wrap_target
+mov x ~NULL
+count_low:
+    jmp pin count_high
+    jmp x-- count_low
+count_high:
+    jmp x-- test_high
+test_high:
+    jmp pin count_high
+mov ISR ~x
+push noblock
+.wrap
