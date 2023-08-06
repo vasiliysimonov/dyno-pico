@@ -1,0 +1,20 @@
+; period should be less than 0xffffffff / 125Mhz about 34sec
+.program HighAndLow
+
+.wrap_target
+mov x ~NULL
+count_high:
+    jmp x-- test_high
+test_high:
+    jmp pin count_high
+    mov ISR ~x
+    push noblock
+
+mov x ~NULL
+count_low:
+    jmp pin timerstop
+    jmp x-- count_low
+timerstop:
+    mov ISR ~x
+    push noblock
+.wrap

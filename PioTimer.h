@@ -10,13 +10,14 @@ public:
         TYPE_RAISING_EDGE
     };
 
-    PioTimer(PIO pio, uint stateMachine, uint inputPin, Type type);
-    bool readPeriod(uint32_t& outPeriodNs);
-    ~PioTimer();
+    PioTimer(PIO pio, uint stateMachine, uint inputPin);
+    bool readPeriod(uint32_t& outPeriodNs, char& outType);
 private:
     PIO pio;
     uint stateMachine;
     uint32_t nsInTick;
+    uint32_t previous;
+    bool high;
 };
 
 #endif

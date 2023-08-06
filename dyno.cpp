@@ -156,11 +156,11 @@ void print_lcd_updates() {
 
 void measure_spool_up() {
     PioTimer timers[] {
-        PioTimer(pio0, 0, PIN_SENSOR_A, PioTimer::TYPE_RAISING_EDGE),
-        PioTimer(pio0, 1, PIN_SENSOR_B, PioTimer::TYPE_RAISING_EDGE),
-        PioTimer(pio0, 2, PIN_SENSOR_C, PioTimer::TYPE_RAISING_EDGE)
+        PioTimer(pio0, 0, PIN_SENSOR_A),
+        PioTimer(pio0, 1, PIN_SENSOR_B),
+        PioTimer(pio0, 2, PIN_SENSOR_C)
     };
-    const char* timerNames[] {"ar", "br", "cr"};
+    const char* timerNames = "abc";
     const uint32_t numTimers = 3;
     const uint32_t mask = 0x7;
     smoothRpm.reset(0);
@@ -170,9 +170,10 @@ void measure_spool_up() {
     uint32_t startTime = time_us_32();
     while (button_is_pressed(PIN_BUTTON_THROTTLE)) { // TODO several button reads
         uint32_t periodNs;
+        char type;
         for (int i = 0; i < numTimers; i++) {
-            if (!timers[i].readPeriod(periodNs)) continue;
-            fprintf(stdout, "%s %d\n", timerNames[i], periodNs);
+            if (!timers[i].readPeriod(periodNs, type)) continue;
+            fprintf(stdout, "%c%c %d\n", timerNames[i], type, periodNs);
             smoothRpm.update(60E+9f / periodNs);
             if (time_us_32() - startTime > 4 * 1000000) {
                 pio_set_sm_mask_enabled(pio0, mask, false);
