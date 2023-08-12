@@ -28,26 +28,35 @@ const uint PIN_ADC_TEMPERATURE = 26;
 class EMA { // Exponential Moving Average
 public:
     EMA(uint32_t period) : period(period) {
+        // mutex_init(&mutex);
     }
 
     void update(float measurement) {
+        // mutex_enter_blocking(&mutex);
         if (count < period) ++count;
         value = ((count - 1) * value + measurement) / count;
+        // mutex_exit(&mutex);
     }
 
     void reset(float v) {
+        // mutex_enter_blocking(&mutex);
         value = v;
         count = 0;
+        // mutex_exit(&mutex);
     }
 
     float get() {
-        return value;
+        // mutex_enter_blocking(&mutex);
+        auto copy = value;
+        // mutex_exit(&mutex);
+        return copy;
     }
 
 private:
     volatile float value;
     uint32_t count;
     uint32_t period;
+    // mutex_t mutex;
 };
 
 EMA smoothRpm(16);
@@ -136,7 +145,7 @@ void update_lcd(SSD1306 &lcd) {
     char line[17];
     sprintf(line, "%.0f", smoothRpm.get());
     drawText(&lcd, font_12x16, line, 0, 0);  
-
+    
     sprintf(line, "%.1fC", smoothTemperature.get());
     drawText(&lcd, font_12x16, line, 0, 18);
     lcd.sendBuffer();
@@ -175,7 +184,7 @@ void measure_spool_up() {
             if (!timers[i].readPeriod(periodNs, type)) continue;
             fprintf(stdout, "%c%c %d\n", timerNames[i], type, periodNs);
             smoothRpm.update(60E+9f / periodNs);
-            if (time_us_32() - startTime > 4 * 1000000) {
+            if (time_us_32() - startTime > 1 * 1000000) {
                 pio_set_sm_mask_enabled(pio0, mask, false);
                 if (pio0->fdebug != 0) fprintf(stdout, "pio debug %x\n", pio0->fdebug);
                 fprintf(stdout, "final rpm %.0f\n", smoothRpm.get());

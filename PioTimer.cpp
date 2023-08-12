@@ -12,15 +12,17 @@ PioTimer::PioTimer(PIO pio, uint stateMachine, uint inputPin) {
     high = true;
 
     pio_gpio_init(pio, inputPin);
-    uint offset;
-    pio_sm_config config;
     
     offset = pio_add_program(pio, &HighAndLow_program);
-    config = HighAndLow_program_get_default_config(offset);
+    pio_sm_config config = HighAndLow_program_get_default_config(offset);
     
     sm_config_set_jmp_pin(&config, inputPin);
     sm_config_set_in_shift(&config, false, false, 0);
     pio_sm_init(pio, stateMachine, offset, &config);
+}
+
+PioTimer::~PioTimer() {
+    pio_remove_program(pio, &HighAndLow_program, offset);
 }
 
 bool PioTimer::readPeriod(uint32_t& outPeriodNs, char& outType) {

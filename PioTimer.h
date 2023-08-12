@@ -12,9 +12,11 @@ public:
 
     PioTimer(PIO pio, uint stateMachine, uint inputPin);
     bool readPeriod(uint32_t& outPeriodNs, char& outType);
+    ~PioTimer();
 private:
     PIO pio;
     uint stateMachine;
+    uint offset;
     uint32_t nsInTick;
     uint32_t previous;
     bool high;
