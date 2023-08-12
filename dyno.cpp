@@ -11,7 +11,6 @@
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
-#include "RingBuffer.h"
 #include "PioTimer.h"
 #include "EMA.h"
 #include "Servo.h"

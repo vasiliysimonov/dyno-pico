@@ -24,8 +24,6 @@ add_executable(${PROJECT_NAME}
     Servo.cpp
 )
 
-pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/RiseToRise.pio)
-pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/FallToFall.pio)
 pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/HighAndLow.pio)
 
 # Create map/bin/hex/uf2 files
