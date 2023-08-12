@@ -7,16 +7,19 @@
 #include "pico/binary_info.h"
 #include "pico/multicore.h"
 #include "hardware/i2c.h"
-#include "hardware/pwm.h"
 #include "hardware/adc.h"
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
 
 #include "RingBuffer.h"
 #include "PioTimer.h"
+#include "EMA.h"
+#include "Servo.h"
 
 using namespace pico_ssd1306;
 
+const uint PIN_SERIAL_DATA = 6;
+const uint PIN_SERIAL_CLOCK = 7;
 const uint PIN_BUTTON_THROTTLE = 15;
 const uint PIN_BUTTON_REVERSE = 10;
 const uint PIN_SENSOR_A = 19;
@@ -25,42 +28,9 @@ const uint PIN_SENSOR_C = 21;
 const uint PIN_ESC = 0;
 const uint PIN_ADC_TEMPERATURE = 26;
 
-class EMA { // Exponential Moving Average
-public:
-    EMA(uint32_t period) : period(period) {
-        // mutex_init(&mutex);
-    }
-
-    void update(float measurement) {
-        // mutex_enter_blocking(&mutex);
-        if (count < period) ++count;
-        value = ((count - 1) * value + measurement) / count;
-        // mutex_exit(&mutex);
-    }
-
-    void reset(float v) {
-        // mutex_enter_blocking(&mutex);
-        value = v;
-        count = 0;
-        // mutex_exit(&mutex);
-    }
-
-    float get() {
-        // mutex_enter_blocking(&mutex);
-        auto copy = value;
-        // mutex_exit(&mutex);
-        return copy;
-    }
-
-private:
-    volatile float value;
-    uint32_t count;
-    uint32_t period;
-    // mutex_t mutex;
-};
-
-EMA smoothRpm(16);
-EMA smoothTemperature(32);
+EMA g_smooth_rpm(16);
+EMA g_smooth_temperature(32);
+Servo g_servo;
 
 void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
     i2c_init(i2c, 400 * 1000);
@@ -70,7 +40,7 @@ void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl) {
     gpio_pull_up(scl);
 }
 
-bool reserved_addr(uint8_t addr) {
+bool i2c_is_reserved_addr(uint8_t addr) {
     return (addr & 0x78) == 0 || (addr & 0x78) == 0x78;
 }
 
@@ -79,7 +49,7 @@ void i2c_scan_address() {
     printf("   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
     for (int addr = 0; addr < (1 << 7); ++addr) {
         if (addr % 16 == 0) {
-            printf("%02x ", addr);
+            fprintf(stdout, "%02x ", addr);
         }
 
         // Perform a 1-byte dummy read from the probe address. If a slave
@@ -90,16 +60,16 @@ void i2c_scan_address() {
         // Skip over any reserved addresses.
         int ret;
         uint8_t rxdata;
-        if (reserved_addr(addr)) {
+        if (i2c_is_reserved_addr(addr)) {
             ret = PICO_ERROR_GENERIC;
         } else {
             ret = i2c_read_blocking(i2c_default, addr, &rxdata, 1, false);
         }
 
-        printf(ret < 0 ? "." : "@");
-        printf(addr % 16 == 15 ? "\n" : "  ");
+        fprintf(stdout, ret < 0 ? "." : "@");
+        fprintf(stdout, addr % 16 == 15 ? "\n" : "  ");
     }
-    printf("Done.\n");
+    fprintf(stdout, "done.\n");
 }
 
 void button_init(uint pin) {
@@ -111,54 +81,32 @@ bool button_is_pressed(uint pin) {
     return !gpio_get(pin);
 }
 
-struct {
-    uint slice;
-    uint channel;
-    uint16_t wrap;
-
-    void init(uint pin) {
-        gpio_set_function(pin, GPIO_FUNC_PWM);
-        slice = pwm_gpio_to_slice_num(pin);
-        channel = pwm_gpio_to_channel(pin);
-        // servo cycle is 3000mks or 333Hz 
-        uint32_t freq = 333;
-        uint32_t clock = 125000000;
-        uint32_t divider16 = clock / (freq * 4096) +
-                            (clock % (freq * 4096) != 0);
-        if (divider16 / 16 == 0) divider16 = 16;
-        wrap = clock * 16 / divider16 / freq - 1;
-        pwm_set_clkdiv_int_frac(slice, divider16 / 16, divider16 & 0xF);
-        pwm_set_wrap(slice, wrap);
-        pwm_set_enabled(slice, true);
+bool button_released_for_ms(uint pin, uint ms) {
+    for (int i = 0; i < ms; ++i) {
+        if (button_is_pressed(pin)) return false;
+        sleep_ms(1);
     }
-
-    // duty 1000mks - low
-    // duty 1500mks - mid
-    // duty 2000mks - high
-    void setMicros(uint32_t micros) {
-        pwm_set_chan_level(slice, channel, wrap * micros / 3000); // given 333Hz or 3000us cycle
-    }
-} servo;
-
-void update_lcd(SSD1306 &lcd) {
-    lcd.clear(); // TODO don't clear?
-    char line[17];
-    sprintf(line, "%.0f", smoothRpm.get());
-    drawText(&lcd, font_12x16, line, 0, 0);  
-    
-    sprintf(line, "%.1fC", smoothTemperature.get());
-    drawText(&lcd, font_12x16, line, 0, 18);
-    lcd.sendBuffer();
+    return true;
 }
 
-void print_lcd_updates() {
-    i2c_setup(i2c1, 6, 7);
-    sleep_ms(250);
+void lcd_show_updates() {
+    i2c_setup(i2c1, PIN_SERIAL_DATA, PIN_SERIAL_CLOCK);
+    sleep_ms(250); // let it settle
     SSD1306 lcd = SSD1306(i2c1, 0x3C, Size::W128xH32);
     lcd.setOrientation(1);
 
+    char line[17];
     while (true) {
-        update_lcd(lcd);
+        lcd.clear();
+        
+        sprintf(line, "%.0f", g_smooth_rpm.get());
+        drawText(&lcd, font_12x16, line, 0, 0);  
+        
+        sprintf(line, "%.1fC", g_smooth_temperature.get());
+        drawText(&lcd, font_12x16, line, 0, 18);
+
+        lcd.sendBuffer();
+
         sleep_ms(66);
     }
 }
@@ -169,44 +117,44 @@ void measure_spool_up() {
         PioTimer(pio0, 1, PIN_SENSOR_B),
         PioTimer(pio0, 2, PIN_SENSOR_C)
     };
-    const char* timerNames = "abc";
-    const uint32_t numTimers = 3;
+    const char* timer_names = "abc";
+    const uint32_t num_timers = 3;
     const uint32_t mask = 0x7;
-    smoothRpm.reset(0);
 
-    servo.setMicros(2000);
+    g_smooth_rpm.reset(0);
+    g_servo.set_micros(2000);
     pio_set_sm_mask_enabled(pio0, mask, true);
-    uint32_t startTime = time_us_32();
-    while (button_is_pressed(PIN_BUTTON_THROTTLE)) { // TODO several button reads
-        uint32_t periodNs;
+    uint32_t start_time = time_us_32();
+
+    for (int i = 0; true; ++i) {
+        if (button_released_for_ms(PIN_BUTTON_THROTTLE, 100)) break;
+        if (i >= num_timers) i = 0;
+        uint32_t period_ns;
         char type;
-        for (int i = 0; i < numTimers; i++) {
-            if (!timers[i].readPeriod(periodNs, type)) continue;
-            fprintf(stdout, "%c%c %d\n", timerNames[i], type, periodNs);
-            smoothRpm.update(60E+9f / periodNs);
-            if (time_us_32() - startTime > 1 * 1000000) {
-                pio_set_sm_mask_enabled(pio0, mask, false);
-                if (pio0->fdebug != 0) fprintf(stdout, "pio debug %x\n", pio0->fdebug);
-                fprintf(stdout, "final rpm %.0f\n", smoothRpm.get());
-                fflush(stdout);
-                return;
+        if (!timers[i].read_period(period_ns, type)) continue;
+        fprintf(stdout, "%c%c %d\n", timer_names[i], type, period_ns);
+        g_smooth_rpm.update(60E+9f / period_ns);
+        if (time_us_32() - start_time > 4 * 1000000) {
+            pio_set_sm_mask_enabled(pio0, mask, false);
+            fprintf(stdout, "-- final rpm %.0f\n", g_smooth_rpm.get());
+            if (pio0->fdebug != 0) {
+                fprintf(stdout, "-- pio debug %x\n", pio0->fdebug);
             }
+            fflush(stdout);
+            return;
         }
     }
 }
-
-// TODO 
-// explain gaps in measuring intervals
 
 float voltage_to_degrees(uint16_t adc) {
     const float r1 = 9811.00872f;
     const float a = 7.49510291e-04f;
     const float b = 3.39853521e-04f;
     const float c = -6.07716855e-07f;
-    const float conversionFactor = 3.3f / (1 << 12);
-    float volt = adc * conversionFactor;
-    float lnR = log(r1 * volt / (3.3f - volt));
-    return 1 / (a + b * lnR + c * lnR * lnR * lnR) - 273.15;
+    const float conversion_factor = 3.3f / (1 << 12);
+    float volt = adc * conversion_factor;
+    float ln_r = log(r1 * volt / (3.3f - volt));
+    return 1 / (a + b * ln_r + c * ln_r * ln_r * ln_r) - 273.15;
 }
 
 int main() {
@@ -216,33 +164,33 @@ int main() {
         
     button_init(PIN_BUTTON_THROTTLE);
     button_init(PIN_BUTTON_REVERSE);
-    servo.init(PIN_ESC);
+    g_servo.init(PIN_ESC);
 
     adc_init();
     adc_gpio_init(PIN_ADC_TEMPERATURE);
     adc_select_input(0);
 
     // lcd on second core
-    multicore_launch_core1(&print_lcd_updates);
+    multicore_launch_core1(&lcd_show_updates);
     
-    bool lastThrottle = false;
+    bool last_throttle = false;
     while (true) { 
         // process buttons
         bool throttle = button_is_pressed(PIN_BUTTON_THROTTLE);
         bool reverse = button_is_pressed(PIN_BUTTON_REVERSE);
 
-        if (!lastThrottle && throttle) {
+        if (!last_throttle && throttle) {
             measure_spool_up();
-            servo.setMicros(1500);
+            g_servo.set_micros(1500);
         } else if (reverse) {
-            servo.setMicros(1000);
+            g_servo.set_micros(1000);
         } else {
-            servo.setMicros(1500);
+            g_servo.set_micros(1500);
         }
-        lastThrottle = throttle;
+        last_throttle = throttle;
 
         float t = voltage_to_degrees(adc_read());
-        smoothTemperature.update(t);
+        g_smooth_temperature.update(t);
 
         sleep_ms(50);
     }

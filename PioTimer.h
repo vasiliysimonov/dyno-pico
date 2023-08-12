@@ -5,21 +5,16 @@
 
 class PioTimer {
 public:
-    enum Type{
-        TYPE_FALLING_EDGE,
-        TYPE_RAISING_EDGE
-    };
-
-    PioTimer(PIO pio, uint stateMachine, uint inputPin);
-    bool readPeriod(uint32_t& outPeriodNs, char& outType);
+    PioTimer(PIO pio, uint state_machine, uint input_pin);
     ~PioTimer();
+    bool read_period(uint32_t& out_period_ns, char& out_type);
 private:
-    PIO pio;
-    uint stateMachine;
-    uint offset;
-    uint32_t nsInTick;
-    uint32_t previous;
-    bool high;
+    PIO m_pio;
+    uint m_state_machine;
+    uint m_offset;
+    uint32_t m_ns_in_tick;
+    uint32_t m_previous;
+    bool m_high;
 };
 
 #endif
