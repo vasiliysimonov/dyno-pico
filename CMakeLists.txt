@@ -15,10 +15,12 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_subdirectory(pico-ssd1306) # clone https://github.com/Harbys/pico-ssd1306.git
+add_subdirectory(pico-ads1x15) # clone https://github.com/gavinlyonsrepo/ADS1x15_PICO
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
-    dyno.cpp
+    #dyno.cpp
+    adcmain.cpp
     PioTimer.cpp
     EMA.cpp
     Servo.cpp
@@ -39,6 +41,7 @@ target_link_libraries(${PROJECT_NAME}
     hardware_pio 
     pico_ssd1306
     hardware_clocks
+    pico_ads1x15
 )
 
 # Enable usb output, disable uart output

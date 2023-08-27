@@ -1,3 +1,7 @@
 [submodule "pico-ssd1306"]
 	path = pico-ssd1306
 	url = https://github.com/Harbys/pico-ssd1306.git
+
+[submodule "pico-ads1x15"]
+	path = pico-ads1x15
+	url = https://github.com/gavinlyonsrepo/ADS1x15_PICO.git

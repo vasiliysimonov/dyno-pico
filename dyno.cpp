@@ -8,8 +8,11 @@
 #include "pico/multicore.h"
 #include "hardware/i2c.h"
 #include "hardware/adc.h"
+
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
+
+#include "pico-ads1x15/include/ads1x15/ads1x15.hpp"
 
 #include "PioTimer.h"
 #include "EMA.h"
