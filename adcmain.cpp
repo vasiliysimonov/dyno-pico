@@ -35,11 +35,11 @@ int main() {
         auto t = time_us_32();
         auto a0 = ads.computeVolts(ads.readADC_SingleEnded(ADSX_AIN0));
         auto a1 = ads.computeVolts(ads.readADC_SingleEnded(ADSX_AIN1));
-        auto v0 = a0 * (4.7 + 47) / 4.7;
+        auto v0 = a0 * 10.97687251f; // in practice with divider resistors (4.7 + 47) / 4.7;
         auto half_ref = 1.635545f;
         auto amp = a1 * 200 / half_ref - 200;
         t = time_us_32() - t;
-        fprintf(stdout, "%fV %fA %dus\n", v0, amp, t);
+        fprintf(stdout, "%f\t%f\n", a0, a1);
         sleep_ms(250);
     }
 }
